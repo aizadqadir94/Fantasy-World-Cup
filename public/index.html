@@ -1,1 +1,31 @@
-public/index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Knockout — World Cup 2026 Prediction League</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="kicker">World Cup 2026 · Knockouts</div>
+      <h1>Knock<span class="lo">out</span></h1>
+      <div class="sub">Predict every tie. Nail the scoreline. Win the league.</div>
+    </header>
+    <div id="app"></div>
+  </div>
+
+  <nav class="tabs hide" id="nav">
+    <div class="inner">
+      <button class="tab on" data-tab="play"><span class="ic">⚽</span>Predict</button>
+      <button class="tab" data-tab="board"><span class="ic">🏆</span>Table</button>
+      <button class="tab" data-tab="rules"><span class="ic">📋</span>Scoring</button>
+      <button class="tab" data-tab="admin"><span class="ic">🔧</span>Admin</button>
+    </div>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
