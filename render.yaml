@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: fantasy-knockout-online
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ADMIN_PIN
+        value: change-this-admin-pin
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
