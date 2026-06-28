@@ -13,6 +13,8 @@ const TEAM_LIST = Object.keys(TEAMS).filter((v,i,a)=>a.indexOf(v)===i).sort((a,b
 let STATE = null;
 let TAB = 'play';
 let saveTimers = {};
+let savePromises = {};
+let saveState = {}; // fixture id -> 'saved' | 'saving' | 'error' | 'unsaved'
 const app = document.getElementById('app');
 const nav = document.getElementById('nav');
 
@@ -83,7 +85,7 @@ async function auth(mode){
 function matchState(f){ if(f.actualH !== null) return 'done'; return f.locked ? 'locked' : 'open'; }
 function renderPlay(){
   const fixtures = STATE.fixtures.filter(f => !(f.home === 'TBD' && f.away === 'TBD'));
-  let html = `<p class="sub" style="margin:4px 2px 0">Predicting as <b style="color:var(--gold)">${esc(STATE.me.name)}</b>. Your scores save automatically.</p>`;
+  let html = `<p class="sub" style="margin:4px 2px 0">Predicting as <b style="color:var(--gold)">${esc(STATE.me.name)}</b>. Enter both scores, then tap Save pick. It also auto-saves after you type.</p>`;
   const byRound = {};
   fixtures.forEach(f => (byRound[f.round] ||= []).push(f));
   Object.keys(byRound).forEach(round => {
@@ -105,6 +107,10 @@ function matchCard(f){
       <input type="text" inputmode="numeric" maxlength="2" data-f="${esc(f.id)}" data-s="h" value="${esc(ph)}" placeholder="0">
       <span class="dash">–</span>
       <input type="text" inputmode="numeric" maxlength="2" data-f="${esc(f.id)}" data-s="a" value="${esc(pa)}" placeholder="0">
+    </div>
+    <div class="savebar">
+      <span class="savestatus ${p ? 'saved' : ''}" id="status-${esc(f.id)}">${p ? 'Saved' : 'Enter score, then save'}</span>
+      <button class="btn sm savepick" data-save-pick="${esc(f.id)}" type="button">Save pick</button>
     </div>`;
   } else if(st === 'done'){
     const pts = scoreOne(p, f);
@@ -124,23 +130,72 @@ function matchCard(f){
     </div>${bottom}</div>`;
 }
 function bindMatchInputs(){
-  qa('.scorein input').forEach(inp => inp.addEventListener('input', e => {
-    e.target.value = e.target.value.replace(/[^0-9]/g,'').slice(0,2);
-    queueSave(e.target.dataset.f);
-  }));
+  qa('.scorein input').forEach(inp => {
+    inp.addEventListener('input', e => {
+      e.target.value = e.target.value.replace(/[^0-9]/g,'').slice(0,2);
+      setSaveStatus(e.target.dataset.f, 'unsaved', 'Not saved yet');
+      queueSave(e.target.dataset.f);
+    });
+    inp.addEventListener('blur', e => queueSave(e.target.dataset.f, 0));
+  });
+  qa('[data-save-pick]').forEach(btn => {
+    btn.onclick = async () => {
+      await savePredictionNow(btn.dataset.savePick);
+    };
+  });
 }
-function queueSave(fid){
+function setSaveStatus(fid, cls, text){
+  saveState[fid] = cls;
+  const el = q('#status-' + CSS.escape(fid));
+  if(!el) return;
+  el.className = 'savestatus ' + cls;
+  el.textContent = text;
+}
+function queueSave(fid, delay=500){
   clearTimeout(saveTimers[fid]);
-  saveTimers[fid] = setTimeout(async () => {
-    const h = q(`input[data-f="${fid}"][data-s="h"]`), a = q(`input[data-f="${fid}"][data-s="a"]`);
-    if(!h || !a || h.value === '' || a.value === '') return;
-    try {
-      await api('/api/predictions/' + encodeURIComponent(fid), { method:'PUT', body:JSON.stringify({h:Number(h.value), a:Number(a.value)}) });
-      STATE.myPredictions[fid] = {h:Number(h.value), a:Number(a.value)};
+  saveTimers[fid] = setTimeout(() => savePredictionNow(fid), delay);
+}
+async function savePredictionNow(fid){
+  clearTimeout(saveTimers[fid]);
+  const h = q(`input[data-f="${CSS.escape(fid)}"][data-s="h"]`);
+  const a = q(`input[data-f="${CSS.escape(fid)}"][data-s="a"]`);
+  if(!h || !a) return;
+  if(h.value === '' || a.value === ''){
+    setSaveStatus(fid, 'unsaved', 'Enter both scores');
+    return;
+  }
+  const body = {h:Number(h.value), a:Number(a.value)};
+  setSaveStatus(fid, 'saving', 'Saving...');
+  const p = api('/api/predictions/' + encodeURIComponent(fid), { method:'PUT', body:JSON.stringify(body) })
+    .then(() => {
+      STATE.myPredictions[fid] = body;
+      setSaveStatus(fid, 'saved', 'Saved');
       const chip = q('#chip-' + CSS.escape(fid));
       if(chip){ chip.classList.add('show'); setTimeout(()=>chip.classList.remove('show'),1300); }
-    } catch(e){ toast(e.message); await load(); }
-  }, 500);
+    })
+    .catch(async e => {
+      setSaveStatus(fid, 'error', 'Not saved — tap Save again');
+      toast(e.message);
+      await load().catch(()=>{});
+    })
+    .finally(() => { delete savePromises[fid]; });
+  savePromises[fid] = p;
+  return p;
+}
+async function flushPendingSaves(){
+  const ids = Array.from(new Set([
+    ...Object.keys(saveTimers).filter(k => saveTimers[k]),
+    ...qa('.scorein input').map(i => i.dataset.f).filter(Boolean)
+  ]));
+  for(const id of ids){
+    const status = saveState[id];
+    const h = q(`input[data-f="${CSS.escape(id)}"][data-s="h"]`);
+    const a = q(`input[data-f="${CSS.escape(id)}"][data-s="a"]`);
+    if(h && a && h.value !== '' && a.value !== '' && status !== 'saved'){
+      await savePredictionNow(id);
+    }
+  }
+  await Promise.all(Object.values(savePromises));
 }
 function sign(h,a){ return h>a?1:h<a?-1:0; }
 function scoreOne(p,f){
@@ -227,7 +282,7 @@ async function postResult(id){
   try { await api(`/api/admin/fixtures/${encodeURIComponent(id)}/result`, {method:'POST', body:JSON.stringify({h:Number(h), a:Number(a)})}); await load(); toast('Result posted'); } catch(e){ toast(e.message); }
 }
 async function clearResult(id){ try { await api(`/api/admin/fixtures/${encodeURIComponent(id)}/result`, {method:'POST', body:JSON.stringify({h:null,a:null})}); await load(); toast('Score cleared'); } catch(e){ toast(e.message); } }
-function bindNav(){ qa('.tab').forEach(t => { t.classList.toggle('on', t.dataset.tab === TAB); t.onclick = async () => { TAB = t.dataset.tab; if(TAB !== 'admin') await load(); else render(); }; }); }
+function bindNav(){ qa('.tab').forEach(t => { t.classList.toggle('on', t.dataset.tab === TAB); t.onclick = async () => { if(TAB === 'play') await flushPendingSaves(); TAB = t.dataset.tab; if(TAB !== 'admin') await load(); else render(); }; }); }
 
 load().catch(e => { app.innerHTML = `<div class="empty">Could not load app.<br>${esc(e.message)}</div>`; });
 setInterval(() => { if(STATE?.me && TAB === 'board') load().catch(()=>{}); }, 15000);
