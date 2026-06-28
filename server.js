@@ -1,22 +1,31 @@
 const express = require('express');
 const helmet = require('helmet');
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ADMIN_PIN = process.env.ADMIN_PIN || 'admin1234';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
-const DB_PATH = path.join(__dirname, 'data', 'db.json');
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variable.');
+}
+
+const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false }
+    })
+  : null;
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-function ensureDataDir() {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-}
+const SETTINGS = { winnerPts: 2, scorelineBonus: 2 };
 
 function starterFixtures() {
   return [
@@ -39,32 +48,21 @@ function starterFixtures() {
   ];
 }
 function fx(id, round, home, away, kickoff, venue) {
-  return { id, round, home, away, kickoff, venue, locked: false, actualH: null, actualA: null };
+  return { id, round, home, away, kickoff, venue, locked: false, actual_h: null, actual_a: null };
 }
-
-function newDb() {
+function toFixture(row) {
   return {
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    settings: { winnerPts: 2, scorelineBonus: 2 },
-    fixtures: starterFixtures(),
-    players: {},
-    predictions: {},
-    sessions: {}
+    id: row.id,
+    round: row.round,
+    home: row.home,
+    away: row.away,
+    kickoff: row.kickoff,
+    venue: row.venue || '',
+    locked: Boolean(row.locked),
+    actualH: row.actual_h,
+    actualA: row.actual_a
   };
 }
-
-function readDb() {
-  ensureDataDir();
-  if (!fs.existsSync(DB_PATH)) writeDb(newDb());
-  return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-}
-function writeDb(db) {
-  ensureDataDir();
-  db.updatedAt = new Date().toISOString();
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
-}
-
 function normalizeName(name) {
   return String(name || '').trim().replace(/\s+/g, ' ').slice(0, 24);
 }
@@ -72,7 +70,7 @@ function validPin(pin) {
   return /^\d{4,8}$/.test(String(pin || ''));
 }
 function hashPin(pin, salt = crypto.randomBytes(16).toString('hex')) {
-  const hash = crypto.pbkdf2Sync(String(pin), salt, 120000, 32, 'sha256').toString('hex');
+  const hash = crypto.pbkdf2Sync(String(pin), salt + SESSION_SECRET, 120000, 32, 'sha256').toString('hex');
   return { salt, hash };
 }
 function verifyPin(pin, salt, expected) {
@@ -80,171 +78,250 @@ function verifyPin(pin, salt, expected) {
   try { return crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected)); }
   catch { return false; }
 }
-function makeToken() {
-  return crypto.randomBytes(24).toString('hex');
+function makeToken() { return crypto.randomBytes(24).toString('hex'); }
+function publicPlayer(p) { return { id: p.id, name: p.name, createdAt: p.created_at || p.createdAt }; }
+function isAdmin(req) { return String(req.headers['x-admin-pin'] || '') === String(ADMIN_PIN); }
+function sign(h, a) { return h > a ? 1 : h < a ? -1 : 0; }
+function scoreOne(pred, fixture) {
+  if (!pred || fixture.actualH === null || fixture.actualA === null) return null;
+  if (pred.h === fixture.actualH && pred.a === fixture.actualA) return SETTINGS.winnerPts + SETTINGS.scorelineBonus;
+  if (sign(pred.h, pred.a) === sign(fixture.actualH, fixture.actualA)) return SETTINGS.winnerPts;
+  return 0;
 }
-function publicPlayer(p) {
-  return { id: p.id, name: p.name, createdAt: p.createdAt };
+function requireDb(res) {
+  if (!supabase) {
+    res.status(500).json({ error: 'Supabase is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Render.' });
+    return false;
+  }
+  return true;
 }
-function auth(req, db) {
+async function dbSelect(table, columns='*') {
+  const { data, error } = await supabase.from(table).select(columns);
+  if (error) throw error;
+  return data || [];
+}
+async function getFixtures() {
+  const { data, error } = await supabase.from('fixtures').select('*').order('kickoff', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(toFixture);
+}
+async function getPlayers() {
+  return await dbSelect('players', '*');
+}
+async function getPlayerByName(name) {
+  const { data, error } = await supabase.from('players').select('*').ilike('name', name).limit(1).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+async function getPredictionsForPlayer(playerId) {
+  const { data, error } = await supabase.from('predictions').select('*').eq('player_id', playerId);
+  if (error) throw error;
+  const out = {};
+  for (const p of data || []) out[p.fixture_id] = { h: p.h, a: p.a, updatedAt: p.updated_at };
+  return out;
+}
+async function getAllPredictions() {
+  const rows = await dbSelect('predictions', '*');
+  const out = {};
+  for (const p of rows) {
+    if (!out[p.player_id]) out[p.player_id] = {};
+    out[p.player_id][p.fixture_id] = { h: p.h, a: p.a, updatedAt: p.updated_at };
+  }
+  return out;
+}
+async function auth(req) {
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token) return null;
-  const sess = db.sessions[token];
+  const { data: sess, error: sessErr } = await supabase.from('sessions').select('*').eq('token', token).maybeSingle();
+  if (sessErr) throw sessErr;
   if (!sess) return null;
-  const player = db.players[sess.playerId];
+  const { data: player, error: playerErr } = await supabase.from('players').select('*').eq('id', sess.player_id).maybeSingle();
+  if (playerErr) throw playerErr;
   if (!player) return null;
   return { token, player };
 }
-function isAdmin(req) {
-  return String(req.headers['x-admin-pin'] || '') === String(ADMIN_PIN);
-}
-function sign(h, a) { return h > a ? 1 : h < a ? -1 : 0; }
-function scoreOne(pred, fixture, settings) {
-  if (!pred || fixture.actualH === null || fixture.actualA === null) return null;
-  if (pred.h === fixture.actualH && pred.a === fixture.actualA) return settings.winnerPts + settings.scorelineBonus;
-  if (sign(pred.h, pred.a) === sign(fixture.actualH, fixture.actualA)) return settings.winnerPts;
-  return 0;
-}
-function leaderboard(db) {
-  return Object.values(db.players).map(p => {
-    const pp = db.predictions[p.id] || {};
+async function leaderboard() {
+  const [players, fixtures, predictions] = await Promise.all([getPlayers(), getFixtures(), getAllPredictions()]);
+  return players.map(p => {
+    const pp = predictions[p.id] || {};
     let pts = 0, exact = 0, counted = 0;
-    for (const f of db.fixtures) {
-      const s = scoreOne(pp[f.id], f, db.settings);
+    for (const f of fixtures) {
+      const s = scoreOne(pp[f.id], f);
       if (s !== null) { counted++; pts += s; }
       if (pp[f.id] && f.actualH !== null && pp[f.id].h === f.actualH && pp[f.id].a === f.actualA) exact++;
     }
     return { id: p.id, name: p.name, pts, exact, counted };
   }).sort((a, b) => b.pts - a.pts || b.exact - a.exact || a.name.localeCompare(b.name));
 }
-
-app.get('/api/health', (req, res) => res.json({ ok: true }));
-
-app.get('/api/state', (req, res) => {
-  const db = readDb();
-  const user = auth(req, db);
-  const preds = user ? (db.predictions[user.player.id] || {}) : {};
-  res.json({
-    fixtures: db.fixtures,
-    settings: db.settings,
-    me: user ? publicPlayer(user.player) : null,
-    myPredictions: preds,
-    leaderboard: leaderboard(db),
-    serverTime: new Date().toISOString()
-  });
-});
-
-app.post('/api/register', (req, res) => {
-  const name = normalizeName(req.body.name);
-  const pin = String(req.body.pin || '');
-  if (!name) return res.status(400).json({ error: 'Enter a display name.' });
-  if (!validPin(pin)) return res.status(400).json({ error: 'PIN must be 4 to 8 digits.' });
-  const db = readDb();
-  const taken = Object.values(db.players).find(p => p.name.toLowerCase() === name.toLowerCase());
-  if (taken) return res.status(409).json({ error: 'This name already exists. Log in with the PIN, or choose another name.' });
-  const id = 'p_' + crypto.randomBytes(8).toString('hex');
-  const hp = hashPin(pin);
-  db.players[id] = { id, name, pinSalt: hp.salt, pinHash: hp.hash, createdAt: new Date().toISOString() };
-  db.predictions[id] = {};
-  const token = makeToken();
-  db.sessions[token] = { playerId: id, createdAt: new Date().toISOString() };
-  writeDb(db);
-  res.json({ token, me: publicPlayer(db.players[id]) });
-});
-
-app.post('/api/login', (req, res) => {
-  const name = normalizeName(req.body.name);
-  const pin = String(req.body.pin || '');
-  const db = readDb();
-  const player = Object.values(db.players).find(p => p.name.toLowerCase() === name.toLowerCase());
-  if (!player || !verifyPin(pin, player.pinSalt, player.pinHash)) return res.status(401).json({ error: 'Wrong name or PIN.' });
-  const token = makeToken();
-  db.sessions[token] = { playerId: player.id, createdAt: new Date().toISOString() };
-  writeDb(db);
-  res.json({ token, me: publicPlayer(player) });
-});
-
-app.post('/api/logout', (req, res) => {
-  const db = readDb();
-  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  if (token && db.sessions[token]) delete db.sessions[token];
-  writeDb(db);
-  res.json({ ok: true });
-});
-
-app.put('/api/predictions/:fixtureId', (req, res) => {
-  const db = readDb();
-  const user = auth(req, db);
-  if (!user) return res.status(401).json({ error: 'Log in first.' });
-  const fixture = db.fixtures.find(f => f.id === req.params.fixtureId);
-  if (!fixture) return res.status(404).json({ error: 'Fixture not found.' });
-  if (fixture.locked || fixture.actualH !== null) return res.status(423).json({ error: 'This match is locked.' });
-  const h = Number(req.body.h), a = Number(req.body.a);
-  if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) {
-    return res.status(400).json({ error: 'Enter valid scores.' });
+async function seedFixturesIfEmpty() {
+  if (!supabase) return;
+  const { count, error } = await supabase.from('fixtures').select('id', { count: 'exact', head: true });
+  if (error) {
+    console.error('Could not check fixtures table. Did you run supabase_schema.sql?', error.message);
+    return;
   }
-  db.predictions[user.player.id] ||= {};
-  db.predictions[user.player.id][fixture.id] = { h, a, updatedAt: new Date().toISOString() };
-  writeDb(db);
-  res.json({ ok: true, prediction: db.predictions[user.player.id][fixture.id] });
-});
-
-app.post('/api/admin/fixtures/:fixtureId', (req, res) => {
-  if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
-  const db = readDb();
-  const f = db.fixtures.find(x => x.id === req.params.fixtureId);
-  if (!f) return res.status(404).json({ error: 'Fixture not found.' });
-  for (const key of ['home','away','round','kickoff','venue']) {
-    if (req.body[key] !== undefined) f[key] = String(req.body[key]).trim();
+  if (!count) {
+    const { error: upsertError } = await supabase.from('fixtures').upsert(starterFixtures(), { onConflict: 'id' });
+    if (upsertError) console.error('Could not seed fixtures:', upsertError.message);
+    else console.log('Seeded starter fixtures in Supabase.');
   }
-  writeDb(db);
-  res.json({ ok: true, fixture: f });
+}
+
+app.get('/api/health', async (req, res) => {
+  if (!requireDb(res)) return;
+  res.json({ ok: true, storage: 'supabase' });
 });
 
-app.post('/api/admin/fixtures/:fixtureId/lock', (req, res) => {
-  if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
-  const db = readDb();
-  const f = db.fixtures.find(x => x.id === req.params.fixtureId);
-  if (!f) return res.status(404).json({ error: 'Fixture not found.' });
-  f.locked = Boolean(req.body.locked);
-  writeDb(db);
-  res.json({ ok: true, fixture: f });
+app.get('/api/state', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    const user = await auth(req);
+    const [fixtures, board] = await Promise.all([getFixtures(), leaderboard()]);
+    const preds = user ? await getPredictionsForPlayer(user.player.id) : {};
+    res.json({
+      fixtures,
+      settings: SETTINGS,
+      me: user ? publicPlayer(user.player) : null,
+      myPredictions: preds,
+      leaderboard: board,
+      serverTime: new Date().toISOString()
+    });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not load state.' }); }
 });
 
-app.post('/api/admin/lock-round', (req, res) => {
-  if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
-  const round = String(req.body.round || 'Round of 32');
-  const locked = Boolean(req.body.locked);
-  const db = readDb();
-  db.fixtures.forEach(f => { if (f.round === round) f.locked = locked; });
-  writeDb(db);
-  res.json({ ok: true, fixtures: db.fixtures });
+app.post('/api/register', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    const name = normalizeName(req.body.name);
+    const pin = String(req.body.pin || '');
+    if (!name) return res.status(400).json({ error: 'Enter a display name.' });
+    if (!validPin(pin)) return res.status(400).json({ error: 'PIN must be 4 to 8 digits.' });
+    const taken = await getPlayerByName(name);
+    if (taken) return res.status(409).json({ error: 'This name already exists. Log in with the PIN, or choose another name.' });
+    const id = 'p_' + crypto.randomBytes(8).toString('hex');
+    const hp = hashPin(pin);
+    const player = { id, name, pin_salt: hp.salt, pin_hash: hp.hash, created_at: new Date().toISOString() };
+    const { error: insertError } = await supabase.from('players').insert(player);
+    if (insertError) throw insertError;
+    const token = makeToken();
+    const { error: sessError } = await supabase.from('sessions').insert({ token, player_id: id, created_at: new Date().toISOString() });
+    if (sessError) throw sessError;
+    res.json({ token, me: publicPlayer(player) });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not create player.' }); }
 });
 
-app.post('/api/admin/fixtures/:fixtureId/result', (req, res) => {
-  if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
-  const db = readDb();
-  const f = db.fixtures.find(x => x.id === req.params.fixtureId);
-  if (!f) return res.status(404).json({ error: 'Fixture not found.' });
-  const h = req.body.h === null || req.body.h === '' ? null : Number(req.body.h);
-  const a = req.body.a === null || req.body.a === '' ? null : Number(req.body.a);
-  if (h === null || a === null) { f.actualH = null; f.actualA = null; }
-  else {
+app.post('/api/login', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    const name = normalizeName(req.body.name);
+    const pin = String(req.body.pin || '');
+    const player = await getPlayerByName(name);
+    if (!player || !verifyPin(pin, player.pin_salt, player.pin_hash)) return res.status(401).json({ error: 'Wrong name or PIN.' });
+    const token = makeToken();
+    const { error } = await supabase.from('sessions').insert({ token, player_id: player.id, created_at: new Date().toISOString() });
+    if (error) throw error;
+    res.json({ token, me: publicPlayer(player) });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not log in.' }); }
+});
+
+app.post('/api/logout', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (token) await supabase.from('sessions').delete().eq('token', token);
+    res.json({ ok: true });
+  } catch { res.json({ ok: true }); }
+});
+
+app.put('/api/predictions/:fixtureId', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    const user = await auth(req);
+    if (!user) return res.status(401).json({ error: 'Log in first.' });
+    const fixtures = await getFixtures();
+    const fixture = fixtures.find(f => f.id === req.params.fixtureId);
+    if (!fixture) return res.status(404).json({ error: 'Fixture not found.' });
+    if (fixture.locked || fixture.actualH !== null) return res.status(423).json({ error: 'This match is locked.' });
+    const h = Number(req.body.h), a = Number(req.body.a);
     if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) return res.status(400).json({ error: 'Enter valid scores.' });
-    f.actualH = h; f.actualA = a; f.locked = true;
-  }
-  writeDb(db);
-  res.json({ ok: true, fixture: f, leaderboard: leaderboard(db) });
+    const row = { player_id: user.player.id, fixture_id: fixture.id, h, a, updated_at: new Date().toISOString() };
+    const { error } = await supabase.from('predictions').upsert(row, { onConflict: 'player_id,fixture_id' });
+    if (error) throw error;
+    res.json({ ok: true, prediction: { h, a, updatedAt: row.updated_at } });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not save prediction.' }); }
 });
 
-app.post('/api/admin/reset-fixtures', (req, res) => {
-  if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
-  const db = readDb();
-  db.fixtures = starterFixtures();
-  writeDb(db);
-  res.json({ ok: true, fixtures: db.fixtures });
+app.post('/api/admin/fixtures/:fixtureId', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const patch = {};
+    if (req.body.home !== undefined) patch.home = String(req.body.home).trim();
+    if (req.body.away !== undefined) patch.away = String(req.body.away).trim();
+    if (req.body.round !== undefined) patch.round = String(req.body.round).trim();
+    if (req.body.kickoff !== undefined) patch.kickoff = String(req.body.kickoff).trim();
+    if (req.body.venue !== undefined) patch.venue = String(req.body.venue).trim();
+    const { data, error } = await supabase.from('fixtures').update(patch).eq('id', req.params.fixtureId).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Fixture not found.' });
+    res.json({ ok: true, fixture: toFixture(data) });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not save fixture.' }); }
+});
+
+app.post('/api/admin/fixtures/:fixtureId/lock', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const { data, error } = await supabase.from('fixtures').update({ locked: Boolean(req.body.locked) }).eq('id', req.params.fixtureId).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Fixture not found.' });
+    res.json({ ok: true, fixture: toFixture(data) });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not lock fixture.' }); }
+});
+
+app.post('/api/admin/lock-round', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const round = String(req.body.round || 'Round of 32');
+    const locked = Boolean(req.body.locked);
+    const { error } = await supabase.from('fixtures').update({ locked }).eq('round', round);
+    if (error) throw error;
+    res.json({ ok: true, fixtures: await getFixtures() });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not lock round.' }); }
+});
+
+app.post('/api/admin/fixtures/:fixtureId/result', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const h = req.body.h === null || req.body.h === '' ? null : Number(req.body.h);
+    const a = req.body.a === null || req.body.a === '' ? null : Number(req.body.a);
+    const patch = {};
+    if (h === null || a === null) { patch.actual_h = null; patch.actual_a = null; }
+    else {
+      if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) return res.status(400).json({ error: 'Enter valid scores.' });
+      patch.actual_h = h; patch.actual_a = a; patch.locked = true;
+    }
+    const { data, error } = await supabase.from('fixtures').update(patch).eq('id', req.params.fixtureId).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Fixture not found.' });
+    res.json({ ok: true, fixture: toFixture(data), leaderboard: await leaderboard() });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not post result.' }); }
+});
+
+app.post('/api/admin/reset-fixtures', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const { error } = await supabase.from('fixtures').upsert(starterFixtures(), { onConflict: 'id' });
+    if (error) throw error;
+    res.json({ ok: true, fixtures: await getFixtures() });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not reset fixtures.' }); }
 });
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.listen(PORT, () => console.log(`Fantasy Knockout running on port ${PORT}`));
+seedFixturesIfEmpty().finally(() => {
+  app.listen(PORT, () => console.log(`Fantasy Knockout running on port ${PORT} using Supabase`));
+});
