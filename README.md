@@ -56,3 +56,11 @@ When the app restarts, it automatically inserts the 8 missing Round of 16 placeh
 - Semi-final: winner +5, exact-score bonus +2, max 7.
 - Third place: winner +3, exact-score bonus +2, max 5.
 - Final: winner +6, exact-score bonus +3, max 9.
+
+
+## Latest privacy update
+
+- The Table tab now shows standings only.
+- Player scorelines are not visible in the Table tab, even after lock or result posting.
+- Only the admin can view all submitted scorelines under Admin -> Admin scorelines.
+- This update does not change Supabase tables and does not delete existing data.

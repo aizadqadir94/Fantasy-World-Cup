@@ -287,40 +287,7 @@ app.put('/api/predictions/:fixtureId', async (req, res) => {
 
 
 app.get('/api/picks', async (req, res) => {
-  try {
-    if (!requireDb(res)) return;
-    const user = await auth(req);
-    if (!user) return res.status(401).json({ error: 'Log in first.' });
-    const round = String(req.query.round || '').trim();
-    const [players, fixtures, predictions] = await Promise.all([getPlayers(), getFixtures(), getAllPredictions()]);
-    const cleanPlayers = players.map(publicPlayer).sort((a,b) => a.name.localeCompare(b.name));
-    const cleanFixtures = fixtures.filter(f => {
-      if (round && f.round !== round) return false;
-      return !(f.home === 'TBD' && f.away === 'TBD');
-    });
-    const rows = cleanFixtures.map(f => {
-      const visible = Boolean(f.locked || f.actualH !== null);
-      return {
-        id: f.id,
-        round: f.round,
-        home: f.home,
-        away: f.away,
-        kickoff: f.kickoff,
-        venue: f.venue,
-        locked: f.locked,
-        actualH: f.actualH,
-        actualA: f.actualA,
-        visible,
-        predictions: cleanPlayers.map(p => {
-          const pred = (predictions[p.id] || {})[f.id];
-          const base = { playerId: p.id, name: p.name, submitted: Boolean(pred) };
-          if (visible && pred) return Object.assign(base, { h: pred.h, a: pred.a, updatedAt: pred.updatedAt });
-          return base;
-        })
-      };
-    });
-    res.json({ ok: true, round, players: cleanPlayers, rows });
-  } catch (e) { res.status(500).json({ error: e.message || 'Could not load picks.' }); }
+  res.status(403).json({ error: 'Prediction scorelines are admin-only.' });
 });
 
 
