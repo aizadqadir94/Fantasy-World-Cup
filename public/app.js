@@ -16,8 +16,6 @@ let STATE = null;
 let TAB = 'play';
 let PLAY_ROUND = localStorage.getItem('knockout_play_round') || '';
 let ADMIN_ROUND = localStorage.getItem('knockout_admin_round') || '';
-let PICKS_ROUND = localStorage.getItem('knockout_picks_round') || '';
-let picksState = null;
 let adminStatus = null;
 let adminPicks = null;
 let saveTimers = {};
@@ -75,7 +73,6 @@ function bindRoundTabs(){
       const round = btn.dataset.round;
       if(btn.dataset.roundArea === 'play') { PLAY_ROUND = round; localStorage.setItem('knockout_play_round', round); renderPlay(); bindNav(); }
       if(btn.dataset.roundArea === 'admin') { ADMIN_ROUND = round; localStorage.setItem('knockout_admin_round', round); await Promise.all([loadAdminStatus(round).catch(()=>{}), loadAdminPicks(round).catch(()=>{})]); renderAdmin(); bindNav(); }
-      if(btn.dataset.roundArea === 'picks') { PICKS_ROUND = round; localStorage.setItem('knockout_picks_round', round); await loadPicks(round).catch(e=>toast(e.message)); renderBoard(); bindNav(); }
     };
   });
 }
@@ -249,11 +246,6 @@ function scoreOne(p,f){
 
 function renderBoard(){
   const settled = STATE.fixtures.filter(f => f.actualH !== null).length;
-  const rounds = getRounds(STATE.fixtures);
-  PICKS_ROUND = ensureRound(PICKS_ROUND, rounds);
-  if(!picksState || picksState.round !== PICKS_ROUND){
-    loadPicks(PICKS_ROUND).then(()=>renderBoard()).catch(e=>toast(e.message));
-  }
   let html = `<div class="roundlabel"><span>Standings</span><div class="ln"></div></div><p class="sub" style="margin:-4px 2px 14px">${settled} results counted · ${STATE.leaderboard.length} players</p>`;
   if(!STATE.leaderboard.length) html += '<div class="empty">No players yet.</div>';
   STATE.leaderboard.forEach((r,i) => {
@@ -261,35 +253,9 @@ function renderBoard(){
     html += `<div class="lbrow ${r.id===STATE.me.id?'me':''}"><div class="rank ${rank<=3?'r'+rank:''}">${rank}</div><div class="lbname">${esc(r.name)}${r.id===STATE.me.id ? '<small>you</small>' : `<small>${r.exact} exact ${r.exact===1?'score':'scores'}</small>`}</div><div class="lbpts">${r.pts}<small> pts</small></div></div>`;
   });
   html += '<button class="btn ghost" id="refresh">Refresh table</button>';
-  html += `<div class="roundlabel"><span>All predictions</span><div class="ln"></div></div>`;
-  html += `<div class="hint">Open matches show only whether each player has submitted. Exact scores become visible to everyone once the match is locked or a result is posted. Prediction timestamps are shown after reveal.</div>`;
-  html += roundTabs(rounds, PICKS_ROUND, 'picks');
-  html += renderPicksPanel();
+  html += '<div class="hint" style="margin-top:14px">Player scorelines are not shown in the Table tab. Only the admin can view submitted scorelines in Admin → Admin scorelines.</div>';
   app.innerHTML = html;
-  q('#refresh').onclick = async () => { await load(); await loadPicks(PICKS_ROUND).catch(()=>{}); renderBoard(); toast('Synced'); };
-  bindRoundTabs();
-}
-
-function renderPicksPanel(){
-  if(!picksState || picksState.round !== PICKS_ROUND) return '<div class="panel compact"><p>Loading predictions...</p></div>';
-  if(!picksState.rows.length) return '<div class="empty">No fixtures in this round yet.</div>';
-  let html = '<div class="pickswrap">';
-  picksState.rows.forEach(f => {
-    const status = f.actualH !== null ? `Result ${f.actualH}–${f.actualA}` : f.locked ? 'Locked · scores visible' : 'Open · scores hidden';
-    html += `<div class="pickmatch"><div class="pickhead"><b>${flag(f.home)} ${esc(f.home)} v ${esc(f.away)} ${flag(f.away)}</b><small>${esc(fmtDate(f.kickoff))} · ${esc(status)}</small></div>`;
-    f.predictions.forEach(p => {
-      let val = '';
-      if(f.visible){
-        val = p.submitted ? `<b>${p.h}–${p.a}</b><small>${p.updatedAt ? 'Saved ' + esc(fmtDate(p.updatedAt)) : ''}</small>` : '<span class="missingtxt">No pick</span>';
-      } else {
-        val = p.submitted ? '<span class="submittedtxt">Submitted</span>' : '<span class="missingtxt">No pick yet</span>';
-      }
-      html += `<div class="pickrow"><span>${esc(p.name)}${p.playerId===STATE.me.id?' <em>you</em>':''}</span><span>${val}</span></div>`;
-    });
-    html += '</div>';
-  });
-  html += '</div>';
-  return html;
+  q('#refresh').onclick = async () => { await load(); renderBoard(); toast('Synced'); };
 }
 
 function renderRules(){
@@ -314,10 +280,6 @@ function renderRules(){
   q('#logout').onclick = async () => { try { await api('/api/logout', {method:'POST'}); } catch{} localStorage.removeItem('knockout_token'); await load(); };
 }
 
-async function loadPicks(round = PICKS_ROUND){
-  picksState = await api('/api/picks?round=' + encodeURIComponent(round));
-  return picksState;
-}
 
 async function loadAdminStatus(round = ADMIN_ROUND){
   adminStatus = await api('/api/admin/status?round=' + encodeURIComponent(round));
