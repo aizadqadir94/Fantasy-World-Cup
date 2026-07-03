@@ -1,43 +1,58 @@
-# Fantasy Knockout Online — Supabase Version
+# Fantasy Knockout — Supabase R16 update
 
-This version stores players, PINs, fixtures, predictions, sessions, locks, and results in Supabase Postgres.
-It is safe for Render Free because data is not stored on Render's temporary filesystem.
+This update keeps the existing Supabase database and adds:
 
-## Required environment variables on Render
+- Round of 16 placeholder fixtures in Admin.
+- Round-specific scoring.
+- Round of 16 scoring: +3 for correct winner/draw direction, +2 exact-score bonus, 5 points max.
+- The existing Round of 32 scoring remains +2 winner and +2 exact-score bonus, 4 points max.
+- Existing players, predictions, fixtures, results, and sessions are preserved because they are stored in Supabase.
+- Admin-only scoreline view for every submitted pick, including open, locked, and past matches.
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `ADMIN_PIN`
-- `SESSION_SECRET`
+## Files to replace in GitHub
 
-Never put the service role key in frontend code or GitHub.
+Replace these files from this ZIP:
 
-## Supabase setup
+- server.js
+- public/app.js
+- public/styles.css
+- README.md (optional)
 
-1. Create a free Supabase project.
-2. Open SQL Editor.
-3. Paste and run the contents of `supabase_schema.sql`.
-4. Go to Project Settings / API Keys and copy:
-   - Project URL
-   - service_role key
-5. Put those into Render Environment Variables.
+No Supabase SQL change is required.
+No Render environment-variable change is required.
 
-## Render setup
+## After updating GitHub
 
-Build Command:
+Go to Render and run:
 
-```bash
-npm install
-```
+Manual Deploy -> Deploy latest commit
 
-Start Command:
+When the app restarts, it automatically inserts the 8 missing Round of 16 placeholder fixtures if they are not already in Supabase. It does not overwrite your existing Round of 32 data.
 
-```bash
-npm start
-```
+## Admin views
 
-## Data persistence
+1. Open Admin.
+2. Tap any round tab.
+3. Use Prediction Status to see who is missing picks.
+4. Use Admin scorelines to see all submitted scorelines, including open and past matches.
 
-Render can restart or sleep. That is fine. Your data stays in Supabase.
+## Admin workflow for Round of 16
 
-Supabase Free projects can pause after a week of inactivity. Pausing should not delete your data, but the app may need the project to be restored if nobody uses it for a week.
+1. Open Admin.
+2. Tap the R16 round tab.
+3. Edit each placeholder tie.
+4. Select home and away teams.
+5. Set kickoff/venue if desired.
+6. Tap Save tie.
+7. Let users predict.
+8. At kickoff, tap Lock or Lock R16.
+9. After the match, enter result and tap Post result.
+
+## Scoring
+
+- Round of 32: winner +2, exact-score bonus +2, max 4.
+- Round of 16: winner +3, exact-score bonus +2, max 5.
+- Quarter-final: winner +4, exact-score bonus +2, max 6.
+- Semi-final: winner +5, exact-score bonus +2, max 7.
+- Third place: winner +3, exact-score bonus +2, max 5.
+- Final: winner +6, exact-score bonus +3, max 9.

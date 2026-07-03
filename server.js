@@ -25,7 +25,22 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const SETTINGS = { winnerPts: 2, scorelineBonus: 2 };
+const ROUND_SCORING = {
+  'Round of 32': { winnerPts: 2, scorelineBonus: 2 },
+  'Round of 16': { winnerPts: 3, scorelineBonus: 2 },
+  'Quarter-final': { winnerPts: 4, scorelineBonus: 2 },
+  'Quarter-finals': { winnerPts: 4, scorelineBonus: 2 },
+  'Semi-final': { winnerPts: 5, scorelineBonus: 2 },
+  'Semi-finals': { winnerPts: 5, scorelineBonus: 2 },
+  'Third place': { winnerPts: 3, scorelineBonus: 2 },
+  'Final': { winnerPts: 6, scorelineBonus: 3 }
+};
+const DEFAULT_SCORING = { winnerPts: 2, scorelineBonus: 2 };
+const SETTINGS = { defaultScoring: DEFAULT_SCORING, roundScoring: ROUND_SCORING };
+
+function scoringForRound(round) {
+  return ROUND_SCORING[String(round || '').trim()] || DEFAULT_SCORING;
+}
 
 function starterFixtures() {
   return [
@@ -46,6 +61,21 @@ function starterFixtures() {
     fx('53452569','Round of 32','Argentina','Cape Verde','2026-07-03T22:00:00.000Z',''),
     fx('53452507','Round of 32','TBD','TBD','2026-07-04T01:30:00.000Z','')
   ];
+}
+function roundOf16Fixtures() {
+  return [
+    fx('r16-1','Round of 16','TBD','TBD','','R16 placeholder 1'),
+    fx('r16-2','Round of 16','TBD','TBD','','R16 placeholder 2'),
+    fx('r16-3','Round of 16','TBD','TBD','','R16 placeholder 3'),
+    fx('r16-4','Round of 16','TBD','TBD','','R16 placeholder 4'),
+    fx('r16-5','Round of 16','TBD','TBD','','R16 placeholder 5'),
+    fx('r16-6','Round of 16','TBD','TBD','','R16 placeholder 6'),
+    fx('r16-7','Round of 16','TBD','TBD','','R16 placeholder 7'),
+    fx('r16-8','Round of 16','TBD','TBD','','R16 placeholder 8')
+  ];
+}
+function coreFixtures() {
+  return [...starterFixtures(), ...roundOf16Fixtures()];
 }
 function fx(id, round, home, away, kickoff, venue) {
   return { id, round, home, away, kickoff, venue, locked: false, actual_h: null, actual_a: null };
@@ -84,8 +114,9 @@ function isAdmin(req) { return String(req.headers['x-admin-pin'] || '') === Stri
 function sign(h, a) { return h > a ? 1 : h < a ? -1 : 0; }
 function scoreOne(pred, fixture) {
   if (!pred || fixture.actualH === null || fixture.actualA === null) return null;
-  if (pred.h === fixture.actualH && pred.a === fixture.actualA) return SETTINGS.winnerPts + SETTINGS.scorelineBonus;
-  if (sign(pred.h, pred.a) === sign(fixture.actualH, fixture.actualA)) return SETTINGS.winnerPts;
+  const pts = scoringForRound(fixture.round);
+  if (pred.h === fixture.actualH && pred.a === fixture.actualA) return pts.winnerPts + pts.scorelineBonus;
+  if (sign(pred.h, pred.a) === sign(fixture.actualH, fixture.actualA)) return pts.winnerPts;
   return 0;
 }
 function requireDb(res) {
@@ -155,15 +186,17 @@ async function leaderboard() {
 }
 async function seedFixturesIfEmpty() {
   if (!supabase) return;
-  const { count, error } = await supabase.from('fixtures').select('id', { count: 'exact', head: true });
+  const { data, error } = await supabase.from('fixtures').select('id');
   if (error) {
     console.error('Could not check fixtures table. Did you run supabase_schema.sql?', error.message);
     return;
   }
-  if (!count) {
-    const { error: upsertError } = await supabase.from('fixtures').upsert(starterFixtures(), { onConflict: 'id' });
-    if (upsertError) console.error('Could not seed fixtures:', upsertError.message);
-    else console.log('Seeded starter fixtures in Supabase.');
+  const existing = new Set((data || []).map(r => r.id));
+  const missing = coreFixtures().filter(f => !existing.has(f.id));
+  if (missing.length) {
+    const { error: insertError } = await supabase.from('fixtures').insert(missing);
+    if (insertError) console.error('Could not seed missing fixtures:', insertError.message);
+    else console.log(`Seeded ${missing.length} missing fixture(s) in Supabase.`);
   }
 }
 
@@ -251,6 +284,101 @@ app.put('/api/predictions/:fixtureId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message || 'Could not save prediction.' }); }
 });
 
+
+
+app.get('/api/picks', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    const user = await auth(req);
+    if (!user) return res.status(401).json({ error: 'Log in first.' });
+    const round = String(req.query.round || '').trim();
+    const [players, fixtures, predictions] = await Promise.all([getPlayers(), getFixtures(), getAllPredictions()]);
+    const cleanPlayers = players.map(publicPlayer).sort((a,b) => a.name.localeCompare(b.name));
+    const cleanFixtures = fixtures.filter(f => {
+      if (round && f.round !== round) return false;
+      return !(f.home === 'TBD' && f.away === 'TBD');
+    });
+    const rows = cleanFixtures.map(f => {
+      const visible = Boolean(f.locked || f.actualH !== null);
+      return {
+        id: f.id,
+        round: f.round,
+        home: f.home,
+        away: f.away,
+        kickoff: f.kickoff,
+        venue: f.venue,
+        locked: f.locked,
+        actualH: f.actualH,
+        actualA: f.actualA,
+        visible,
+        predictions: cleanPlayers.map(p => {
+          const pred = (predictions[p.id] || {})[f.id];
+          const base = { playerId: p.id, name: p.name, submitted: Boolean(pred) };
+          if (visible && pred) return Object.assign(base, { h: pred.h, a: pred.a, updatedAt: pred.updatedAt });
+          return base;
+        })
+      };
+    });
+    res.json({ ok: true, round, players: cleanPlayers, rows });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not load picks.' }); }
+});
+
+
+app.get('/api/admin/picks', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const round = String(req.query.round || '').trim();
+    const [players, fixtures, predictions] = await Promise.all([getPlayers(), getFixtures(), getAllPredictions()]);
+    const cleanPlayers = players.map(publicPlayer).sort((a,b) => a.name.localeCompare(b.name));
+    const cleanFixtures = fixtures.filter(f => {
+      if (round && f.round !== round) return false;
+      return !(f.home === 'TBD' && f.away === 'TBD');
+    });
+    const rows = cleanFixtures.map(f => ({
+      id: f.id,
+      round: f.round,
+      home: f.home,
+      away: f.away,
+      kickoff: f.kickoff,
+      venue: f.venue,
+      locked: f.locked,
+      actualH: f.actualH,
+      actualA: f.actualA,
+      predictions: cleanPlayers.map(p => {
+        const pred = (predictions[p.id] || {})[f.id];
+        const base = { playerId: p.id, name: p.name, submitted: Boolean(pred) };
+        if (!pred) return base;
+        const points = scoreOne(pred, f);
+        return Object.assign(base, { h: pred.h, a: pred.a, updatedAt: pred.updatedAt, points });
+      })
+    }));
+    res.json({ ok: true, round, players: cleanPlayers, rows });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not load admin picks.' }); }
+});
+
+app.post('/api/admin/fixtures', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const id = 'fx_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
+    const row = {
+      id,
+      round: String(req.body.round || 'Round of 16').trim(),
+      home: String(req.body.home || 'TBD').trim(),
+      away: String(req.body.away || 'TBD').trim(),
+      kickoff: String(req.body.kickoff || '').trim(),
+      venue: String(req.body.venue || '').trim(),
+      locked: false,
+      actual_h: null,
+      actual_a: null
+    };
+    const { data, error } = await supabase.from('fixtures').insert(row).select('*').maybeSingle();
+    if (error) throw error;
+    res.json({ ok: true, fixture: toFixture(data) });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not add fixture.' }); }
+});
+
 app.post('/api/admin/fixtures/:fixtureId', async (req, res) => {
   try {
     if (!requireDb(res)) return;
@@ -310,11 +438,53 @@ app.post('/api/admin/fixtures/:fixtureId/result', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message || 'Could not post result.' }); }
 });
 
+
+app.get('/api/admin/status', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const round = String(req.query.round || '').trim();
+    const [players, fixtures, predictions] = await Promise.all([getPlayers(), getFixtures(), getAllPredictions()]);
+    const relevantFixtures = fixtures.filter(f => {
+      if (round && f.round !== round) return false;
+      return !(f.home === 'TBD' && f.away === 'TBD');
+    });
+    const rows = players.map(p => {
+      const pp = predictions[p.id] || {};
+      const missing = relevantFixtures
+        .filter(f => !pp[f.id])
+        .map(f => ({ id: f.id, label: `${f.home} vs ${f.away}`, round: f.round }));
+      return {
+        id: p.id,
+        name: p.name,
+        made: relevantFixtures.length - missing.length,
+        total: relevantFixtures.length,
+        missing
+      };
+    }).sort((a, b) => (b.total ? (a.missing.length - b.missing.length) : 0) || a.name.localeCompare(b.name));
+    res.json({ ok: true, round, rows, totalFixtures: relevantFixtures.length });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not load prediction status.' }); }
+});
+
+app.delete('/api/admin/players/:playerId', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const playerId = String(req.params.playerId || '');
+    const { data: player, error: findError } = await supabase.from('players').select('id,name').eq('id', playerId).maybeSingle();
+    if (findError) throw findError;
+    if (!player) return res.status(404).json({ error: 'Player not found.' });
+    const { error } = await supabase.from('players').delete().eq('id', playerId);
+    if (error) throw error;
+    res.json({ ok: true, removed: player, leaderboard: await leaderboard() });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not remove player.' }); }
+});
+
 app.post('/api/admin/reset-fixtures', async (req, res) => {
   try {
     if (!requireDb(res)) return;
     if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
-    const { error } = await supabase.from('fixtures').upsert(starterFixtures(), { onConflict: 'id' });
+    const { error } = await supabase.from('fixtures').upsert(coreFixtures(), { onConflict: 'id' });
     if (error) throw error;
     res.json({ ok: true, fixtures: await getFixtures() });
   } catch (e) { res.status(500).json({ error: e.message || 'Could not reset fixtures.' }); }
