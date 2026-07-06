@@ -317,11 +317,44 @@ app.get('/api/admin/picks', async (req, res) => {
         const base = { playerId: p.id, name: p.name, submitted: Boolean(pred) };
         if (!pred) return base;
         const points = scoreOne(pred, f);
-        return Object.assign(base, { h: pred.h, a: pred.a, updatedAt: pred.updatedAt, points });
+        return Object.assign(base, { h: pred.h, a: pred.a, points });
       })
     }));
     res.json({ ok: true, round, players: cleanPlayers, rows });
   } catch (e) { res.status(500).json({ error: e.message || 'Could not load admin picks.' }); }
+});
+
+
+app.put('/api/admin/predictions/:fixtureId/:playerId', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const fixtureId = String(req.params.fixtureId || '');
+    const playerId = String(req.params.playerId || '');
+    const [fixtures, players] = await Promise.all([getFixtures(), getPlayers()]);
+    const fixture = fixtures.find(f => f.id === fixtureId);
+    const player = players.find(p => p.id === playerId);
+    if (!fixture) return res.status(404).json({ error: 'Fixture not found.' });
+    if (!player) return res.status(404).json({ error: 'Player not found.' });
+    const h = Number(req.body.h), a = Number(req.body.a);
+    if (!Number.isInteger(h) || !Number.isInteger(a) || h < 0 || a < 0 || h > 30 || a > 30) return res.status(400).json({ error: 'Enter valid scores.' });
+    const row = { player_id: playerId, fixture_id: fixtureId, h, a, updated_at: new Date().toISOString() };
+    const { error } = await supabase.from('predictions').upsert(row, { onConflict: 'player_id,fixture_id' });
+    if (error) throw error;
+    res.json({ ok: true, prediction: { playerId, fixtureId, h, a }, leaderboard: await leaderboard() });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not update prediction.' }); }
+});
+
+app.delete('/api/admin/predictions/:fixtureId/:playerId', async (req, res) => {
+  try {
+    if (!requireDb(res)) return;
+    if (!isAdmin(req)) return res.status(401).json({ error: 'Admin PIN required.' });
+    const fixtureId = String(req.params.fixtureId || '');
+    const playerId = String(req.params.playerId || '');
+    const { error } = await supabase.from('predictions').delete().eq('player_id', playerId).eq('fixture_id', fixtureId);
+    if (error) throw error;
+    res.json({ ok: true, removed: { playerId, fixtureId }, leaderboard: await leaderboard() });
+  } catch (e) { res.status(500).json({ error: e.message || 'Could not clear prediction.' }); }
 });
 
 app.post('/api/admin/fixtures', async (req, res) => {
