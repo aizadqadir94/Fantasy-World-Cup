@@ -322,6 +322,9 @@ function renderAdmin(){
   qa('[data-admin-result]').forEach(b => b.onclick = () => postResult(b.dataset.adminResult));
   qa('[data-admin-clear]').forEach(b => b.onclick = () => clearResult(b.dataset.adminClear));
   qa('[data-remove-player]').forEach(b => b.onclick = () => removePlayer(b.dataset.removePlayer, b.dataset.playerName));
+  qa('[data-admin-pick-save]').forEach(b => b.onclick = () => adminSavePick(b.dataset.fixtureId, b.dataset.playerId, b.dataset.playerName));
+  qa('[data-admin-pick-clear]').forEach(b => b.onclick = () => adminClearPick(b.dataset.fixtureId, b.dataset.playerId, b.dataset.playerName));
+  qa('[data-pick-input]').forEach(i => i.addEventListener('input', e => { e.target.value = e.target.value.replace(/[^0-9]/g,'').slice(0,2); }));
 }
 function renderAdminStatus(){
   if(!adminStatus) return `<div class="panel compact"><h2>Prediction Status</h2><p>Loading status...</p></div>`;
@@ -343,7 +346,7 @@ function renderAdminStatus(){
 }
 function renderAdminPicks(){
   if(!adminPicks) return `<div class="panel compact"><h2>Admin scorelines</h2><p>Loading submitted scorelines...</p></div>`;
-  let html = `<div class="panel compact adminpicks"><h2>Admin scorelines</h2><p>${esc(ADMIN_ROUND)} · admin-only view. This shows submitted scorelines for open, locked, and past matches.</p>`;
+  let html = `<div class="panel compact adminpicks"><h2>Admin scorelines</h2><p>${esc(ADMIN_ROUND)} · admin-only view. You can view, edit, or clear any player pick here. Timestamps are hidden.</p>`;
   if(!adminPicks.rows.length){
     html += '<div class="empty small">No fixtures in this round yet.</div>';
   } else {
@@ -351,12 +354,26 @@ function renderAdminPicks(){
       const status = f.actualH !== null ? `Result ${f.actualH}–${f.actualA}` : f.locked ? 'Locked' : 'Open';
       html += `<div class="pickmatch adminpickmatch"><div class="pickhead"><b>${flag(f.home)} ${esc(f.home)} v ${esc(f.away)} ${flag(f.away)}</b><small>${esc(fmtDate(f.kickoff))} · ${esc(status)}</small></div>`;
       f.predictions.forEach(p => {
-        let val = '<span class="missingtxt">No pick</span>';
+        const hVal = p.submitted ? p.h : '';
+        const aVal = p.submitted ? p.a : '';
+        let current = '<span class="missingtxt">No pick</span>';
         if(p.submitted){
           const pts = p.points === null || p.points === undefined ? '' : `<small class="pickpoints">${p.points > 0 ? '+' + p.points : '0'} pts</small>`;
-          val = `<b>${p.h}–${p.a}</b>${pts}<small>${p.updatedAt ? 'Saved ' + esc(fmtDate(p.updatedAt)) : ''}</small>`;
+          current = `<b>${p.h}–${p.a}</b>${pts}`;
         }
-        html += `<div class="pickrow"><span>${esc(p.name)}</span><span>${val}</span></div>`;
+        html += `<div class="pickrow editpickrow">
+          <span>${esc(p.name)}</span>
+          <span class="adminpickcell">
+            <span class="currentpick">${current}</span>
+            <span class="adminpickedit">
+              <input type="text" inputmode="numeric" data-pick-input data-pick-fixture="${esc(f.id)}" data-pick-player="${esc(p.playerId)}" data-side="h" value="${esc(hVal)}" placeholder="H" maxlength="2">
+              <span class="dash">–</span>
+              <input type="text" inputmode="numeric" data-pick-input data-pick-fixture="${esc(f.id)}" data-pick-player="${esc(p.playerId)}" data-side="a" value="${esc(aVal)}" placeholder="A" maxlength="2">
+              <button class="btn sm" type="button" data-admin-pick-save="1" data-fixture-id="${esc(f.id)}" data-player-id="${esc(p.playerId)}" data-player-name="${esc(p.name)}">Save</button>
+              <button class="btn sm ghost" type="button" data-admin-pick-clear="1" data-fixture-id="${esc(f.id)}" data-player-id="${esc(p.playerId)}" data-player-name="${esc(p.name)}">Clear</button>
+            </span>
+          </span>
+        </div>`;
       });
       html += '</div>';
     });
@@ -415,6 +432,26 @@ async function postResult(id){
   try { await api(`/api/admin/fixtures/${encodeURIComponent(id)}/result`, {method:'POST', body:JSON.stringify({h:Number(h), a:Number(a)})}); await load(); await loadAdminStatus(ADMIN_ROUND); await loadAdminPicks(ADMIN_ROUND); toast('Result posted'); } catch(e){ toast(e.message); }
 }
 async function clearResult(id){ try { await api(`/api/admin/fixtures/${encodeURIComponent(id)}/result`, {method:'POST', body:JSON.stringify({h:null,a:null})}); await load(); await loadAdminStatus(ADMIN_ROUND); await loadAdminPicks(ADMIN_ROUND); toast('Score cleared'); } catch(e){ toast(e.message); } }
+async function adminSavePick(fixtureId, playerId, playerName){
+  const hEl = q(`[data-pick-fixture="${CSS.escape(fixtureId)}"][data-pick-player="${CSS.escape(playerId)}"][data-side="h"]`);
+  const aEl = q(`[data-pick-fixture="${CSS.escape(fixtureId)}"][data-pick-player="${CSS.escape(playerId)}"][data-side="a"]`);
+  const h = hEl ? hEl.value.trim() : '';
+  const a = aEl ? aEl.value.trim() : '';
+  if(h === '' || a === '') { toast('Enter both scores first'); return; }
+  try {
+    await api(`/api/admin/predictions/${encodeURIComponent(fixtureId)}/${encodeURIComponent(playerId)}`, {method:'PUT', body:JSON.stringify({h:Number(h), a:Number(a)})});
+    await load(); await loadAdminStatus(ADMIN_ROUND); await loadAdminPicks(ADMIN_ROUND);
+    renderAdmin(); toast(`Saved ${playerName}`);
+  } catch(e){ toast(e.message); }
+}
+async function adminClearPick(fixtureId, playerId, playerName){
+  if(!confirm(`Clear ${playerName}'s pick for this match?`)) return;
+  try {
+    await api(`/api/admin/predictions/${encodeURIComponent(fixtureId)}/${encodeURIComponent(playerId)}`, {method:'DELETE'});
+    await load(); await loadAdminStatus(ADMIN_ROUND); await loadAdminPicks(ADMIN_ROUND);
+    renderAdmin(); toast(`Cleared ${playerName}`);
+  } catch(e){ toast(e.message); }
+}
 async function removePlayer(id, name){
   if(!confirm(`Remove ${name}? This deletes their player login and all their predictions.`)) return;
   try { await api('/api/admin/players/' + encodeURIComponent(id), {method:'DELETE'}); await load(); await loadAdminStatus(ADMIN_ROUND); await loadAdminPicks(ADMIN_ROUND); toast('Player removed'); }
