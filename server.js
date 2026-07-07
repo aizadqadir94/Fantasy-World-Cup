@@ -28,8 +28,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 const ROUND_SCORING = {
   'Round of 32': { winnerPts: 2, scorelineBonus: 2 },
   'Round of 16': { winnerPts: 3, scorelineBonus: 2 },
-  'Quarter-final': { winnerPts: 4, scorelineBonus: 2 },
-  'Quarter-finals': { winnerPts: 4, scorelineBonus: 2 },
+  'Quarter-final': { winnerPts: 3, scorelineBonus: 3 },
+  'Quarter-finals': { winnerPts: 3, scorelineBonus: 3 },
   'Semi-final': { winnerPts: 5, scorelineBonus: 2 },
   'Semi-finals': { winnerPts: 5, scorelineBonus: 2 },
   'Third place': { winnerPts: 3, scorelineBonus: 2 },
@@ -74,8 +74,16 @@ function roundOf16Fixtures() {
     fx('r16-8','Round of 16','TBD','TBD','','R16 placeholder 8')
   ];
 }
+function quarterFinalFixtures() {
+  return [
+    fx('qf-1','Quarter-final','TBD','TBD','','QF placeholder 1'),
+    fx('qf-2','Quarter-final','TBD','TBD','','QF placeholder 2'),
+    fx('qf-3','Quarter-final','TBD','TBD','','QF placeholder 3'),
+    fx('qf-4','Quarter-final','TBD','TBD','','QF placeholder 4')
+  ];
+}
 function coreFixtures() {
-  return [...starterFixtures(), ...roundOf16Fixtures()];
+  return [...starterFixtures(), ...roundOf16Fixtures(), ...quarterFinalFixtures()];
 }
 function fx(id, round, home, away, kickoff, venue) {
   return { id, round, home, away, kickoff, venue, locked: false, actual_h: null, actual_a: null };
