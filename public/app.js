@@ -274,7 +274,7 @@ function renderRules(){
   app.innerHTML = `<div class="scoring"><h3>How points work</h3>
     ${scoreRows}
     <div class="sr"><span>Wrong winner</span><b>0</b></div></div>
-    <div class="hint">For Round of 16, the system is now <b>+3 for correct winner/draw direction</b> and <b>+2 exact-score bonus</b>, so an exact R16 prediction is worth <b>5 points</b>. Predictions lock when the admin locks the tie or posts the result. The backend blocks edits after lock, so changing browser code cannot bypass it.</div>
+    <div class="hint">Round of 16 uses <b>+3 for correct winner/draw direction</b> and <b>+2 exact-score bonus</b>, so an exact R16 prediction is worth <b>5 points</b>. Quarter-final uses <b>+3 for correct winner/draw direction</b> and <b>+3 exact-score bonus</b>, so an exact QF prediction is worth <b>6 points</b>. Predictions lock when the admin locks the tie or posts the result. The backend blocks edits after lock, so changing browser code cannot bypass it.</div>
     <div class="codeline">Logged in as <b>${esc(STATE.me.name)}</b></div>
     <div class="switch" id="logout">Log out / switch player</div>`;
   q('#logout').onclick = async () => { try { await api('/api/logout', {method:'POST'}); } catch{} localStorage.removeItem('knockout_token'); await load(); };
@@ -300,7 +300,7 @@ function renderAdmin(){
   const selectedFixtures = STATE.fixtures.filter(f => f.round === ADMIN_ROUND);
   if(!adminStatus || adminStatus.round !== ADMIN_ROUND){ loadAdminStatus(ADMIN_ROUND).then(()=>render()).catch(e=>toast(e.message)); }
   if(!adminPicks || adminPicks.round !== ADMIN_ROUND){ loadAdminPicks(ADMIN_ROUND).then(()=>render()).catch(e=>toast(e.message)); }
-  let html = `<div class="hint">Admin controls. Use the round tabs so you do not need to scroll through old rounds. Round of 16 has 8 placeholder ties ready; fill teams manually and tap Save tie. The admin-only scorelines section shows every submitted pick, including open and past matches.</div>`;
+  let html = `<div class="hint">Admin controls. Use the round tabs so you do not need to scroll through old rounds. Round of 16 has 8 placeholder ties ready and Quarter-final has 4 placeholder ties ready; fill teams manually and tap Save tie. The admin-only scorelines section shows every submitted pick, including open and past matches.</div>`;
   html += roundTabs(rounds, ADMIN_ROUND, 'admin');
   html += `<div class="grid2" style="margin-bottom:12px"><button class="btn ghost" id="lockround">Lock ${esc(shortRound(ADMIN_ROUND))}</button><button class="btn ghost" id="unlockround">Unlock ${esc(shortRound(ADMIN_ROUND))}</button></div>`;
   html += renderAdminStatus();
