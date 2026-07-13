@@ -8,6 +8,9 @@ Supabase-backed prediction league for friends.
 - Admin can edit any player's prediction if someone forgets their PIN.
 - Admin can clear a player's prediction.
 - Four empty Quarter-final fixtures are seeded for manual admin setup.
+- Two empty Semi-final fixtures are seeded for manual admin setup.
+- One empty Third-place fixture is seeded for manual admin setup.
+- One empty Final fixture is seeded for manual admin setup.
 - Save timestamps are hidden from the admin scorelines section.
 - Normal users do not see other people's scorelines in the Table tab.
 - Round tabs and round-based scoring are preserved.
@@ -17,9 +20,9 @@ Supabase-backed prediction league for friends.
 - Round of 32: +2 winner/draw direction, +2 exact-score bonus = 4 max.
 - Round of 16: +3 winner/draw direction, +2 exact-score bonus = 5 max.
 - Quarter-final: +3 winner/draw direction, +3 exact-score bonus = 6 max.
-- Semi-final: +5 winner/draw direction, +2 exact-score bonus = 7 max.
-- Third place: +3 winner/draw direction, +2 exact-score bonus = 5 max.
-- Final: +6 winner/draw direction, +3 exact-score bonus = 9 max.
+- Semi-final: +4 winner/draw direction, +4 exact-score bonus = 8 max.
+- Third place: +4 winner/draw direction, +4 exact-score bonus = 8 max.
+- Final: +4 winner/draw direction, +4 exact-score bonus = 8 max.
 
 ## Data safety
 

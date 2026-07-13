@@ -30,10 +30,10 @@ const ROUND_SCORING = {
   'Round of 16': { winnerPts: 3, scorelineBonus: 2 },
   'Quarter-final': { winnerPts: 3, scorelineBonus: 3 },
   'Quarter-finals': { winnerPts: 3, scorelineBonus: 3 },
-  'Semi-final': { winnerPts: 5, scorelineBonus: 2 },
-  'Semi-finals': { winnerPts: 5, scorelineBonus: 2 },
-  'Third place': { winnerPts: 3, scorelineBonus: 2 },
-  'Final': { winnerPts: 6, scorelineBonus: 3 }
+  'Semi-final': { winnerPts: 4, scorelineBonus: 4 },
+  'Semi-finals': { winnerPts: 4, scorelineBonus: 4 },
+  'Third place': { winnerPts: 4, scorelineBonus: 4 },
+  'Final': { winnerPts: 4, scorelineBonus: 4 }
 };
 const DEFAULT_SCORING = { winnerPts: 2, scorelineBonus: 2 };
 const SETTINGS = { defaultScoring: DEFAULT_SCORING, roundScoring: ROUND_SCORING };
@@ -82,8 +82,25 @@ function quarterFinalFixtures() {
     fx('qf-4','Quarter-final','TBD','TBD','','QF placeholder 4')
   ];
 }
+
+function semiFinalFixtures() {
+  return [
+    fx('sf-1','Semi-final','TBD','TBD','','SF placeholder 1'),
+    fx('sf-2','Semi-final','TBD','TBD','','SF placeholder 2')
+  ];
+}
+function thirdPlaceFixture() {
+  return [
+    fx('third-1','Third place','TBD','TBD','','Third place placeholder')
+  ];
+}
+function finalFixture() {
+  return [
+    fx('final-1','Final','TBD','TBD','','Final placeholder')
+  ];
+}
 function coreFixtures() {
-  return [...starterFixtures(), ...roundOf16Fixtures(), ...quarterFinalFixtures()];
+  return [...starterFixtures(), ...roundOf16Fixtures(), ...quarterFinalFixtures(), ...semiFinalFixtures(), ...thirdPlaceFixture(), ...finalFixture()];
 }
 function fx(id, round, home, away, kickoff, venue) {
   return { id, round, home, away, kickoff, venue, locked: false, actual_h: null, actual_a: null };
