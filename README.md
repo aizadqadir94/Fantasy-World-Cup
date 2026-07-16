@@ -14,6 +14,8 @@ Supabase-backed prediction league for friends.
 - Save timestamps are hidden from the admin scorelines section.
 - Normal users do not see other people's scorelines in the Table tab.
 - Round tabs and round-based scoring are preserved.
+- Third-place scoring updated to +5 winner and +5 exact-score bonus.
+- Final scoring updated to +7 winner and +7 exact-score bonus.
 
 ## Scoring
 
@@ -21,8 +23,8 @@ Supabase-backed prediction league for friends.
 - Round of 16: +3 winner/draw direction, +2 exact-score bonus = 5 max.
 - Quarter-final: +3 winner/draw direction, +3 exact-score bonus = 6 max.
 - Semi-final: +4 winner/draw direction, +4 exact-score bonus = 8 max.
-- Third place: +4 winner/draw direction, +4 exact-score bonus = 8 max.
-- Final: +4 winner/draw direction, +4 exact-score bonus = 8 max.
+- Third place: +5 winner/draw direction, +5 exact-score bonus = 10 max.
+- Final: +7 winner/draw direction, +7 exact-score bonus = 14 max.
 
 ## Data safety
 
