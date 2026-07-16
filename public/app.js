@@ -274,7 +274,7 @@ function renderRules(){
   app.innerHTML = `<div class="scoring"><h3>How points work</h3>
     ${scoreRows}
     <div class="sr"><span>Wrong winner</span><b>0</b></div></div>
-    <div class="hint">Round of 16 uses <b>+3 for correct winner/draw direction</b> and <b>+2 exact-score bonus</b>, so an exact R16 prediction is worth <b>5 points</b>. Quarter-final uses <b>+3 for correct winner/draw direction</b> and <b>+3 exact-score bonus</b>, so an exact QF prediction is worth <b>6 points</b>. Predictions lock when the admin locks the tie or posts the result. The backend blocks edits after lock, so changing browser code cannot bypass it.</div>
+    <div class="hint">Round of 16 uses <b>+3 winner</b> and <b>+2 exact-score bonus</b>. Quarter-final uses <b>+3 winner</b> and <b>+3 exact-score bonus</b>. Semi-final uses <b>+4 +4</b>. Third-place uses <b>+5 +5</b>. Final uses <b>+7 +7</b>. Predictions lock when the admin locks the tie or posts the result. The backend blocks edits after lock, so changing browser code cannot bypass it.</div>
     <div class="codeline">Logged in as <b>${esc(STATE.me.name)}</b></div>
     <div class="switch" id="logout">Log out / switch player</div>`;
   q('#logout').onclick = async () => { try { await api('/api/logout', {method:'POST'}); } catch{} localStorage.removeItem('knockout_token'); await load(); };
