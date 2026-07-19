@@ -33,7 +33,7 @@ const ROUND_SCORING = {
   'Semi-final': { winnerPts: 4, scorelineBonus: 4 },
   'Semi-finals': { winnerPts: 4, scorelineBonus: 4 },
   'Third place': { winnerPts: 5, scorelineBonus: 5 },
-  'Final': { winnerPts: 7, scorelineBonus: 7 }
+  'Final': { winnerPts: 8, scorelineBonus: 4 }
 };
 const DEFAULT_SCORING = { winnerPts: 2, scorelineBonus: 2 };
 const SETTINGS = { defaultScoring: DEFAULT_SCORING, roundScoring: ROUND_SCORING };
